@@ -23,6 +23,7 @@ export interface ChatStreamEvents {
   onCitations?: (c: Array<Record<string, unknown>>) => void;
   onAskRoute?: (info: Record<string, unknown>) => void;
   onError?: (message: string) => void;
+  onNotice?: (info: Record<string, unknown>) => void;
   onDone?: (info: Record<string, unknown>) => void;
 }
 
@@ -83,6 +84,7 @@ export function streamChat(
           else if (evt === "citations") events.onCitations?.(data.citations || []);
           else if (evt === "ask_route") events.onAskRoute?.(data);
           else if (evt === "error") events.onError?.(data.message || "Error");
+          else if (evt === "notice") events.onNotice?.(data);
           else if (evt === "done") events.onDone?.(data);
         } catch { /* ignore */ }
       }

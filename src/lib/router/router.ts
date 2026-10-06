@@ -1,7 +1,8 @@
 import type { CapabilityCategory, ResolvedProvider } from "../providers/types";
-import { listResolvedProviders } from "../providers/manager";
+import { listResolvedProviders, listStoredModels } from "../providers/manager";
 import { getSettings } from "../server-settings";
 import { log } from "../logger";
+import type { ReasoningDepth } from "../voice/config";
 
 // ---------- Task classification (rule + heuristic layer, extensible) ----------
 
@@ -19,7 +20,7 @@ const PATTERNS: Array<{ capability: CapabilityCategory; re: RegExp; weight: numb
   { capability: "video", re: /\b(generate|create|make)\b[^.]{0,60}\b(video|animation|clip|footage)\b/i, weight: 0.9 },
   { capability: "audio", re: /\b(text[- ]to[- ]speech|voiceover|transcribe|speech[- ]to[- ]text|generate.*audio|podcast voice)\b/i, weight: 0.9 },
   { capability: "factcheck", re: /\b(fact[- ]?check|verify (this )?claim|is (this|it|that) (true|false)|debunk|misinformation)\b/i, weight: 0.9, needsWeb: true },
-  { capability: "research", re: /\b(research|latest|current|news|today'?s|this week|price of|compare (products|prices|options)|market (analysis|overview)|sources|cite)\b/i, weight: 0.75, needsWeb: true },
+  { capability: "research", re: /\b(research|latest|current|news|today'?s|this week|price of|compare (products|prices|options)|market (analysis|overview)|sources|cite|search (the )?web|look up online|find online|browse (the )?web)\b/i, weight: 0.75, needsWeb: true },
   { capability: "coding", re: /\b(code|function|class|bug|debug|refactor|compile|typescript|python|javascript|rust|go\b|sql|api endpoint|pull request|stack trace|error:|npm|docker|git)\b/i, weight: 0.7, needsTools: true },
   { capability: "coding", re: /```[\s\S]{10,}|def |function\s+\w+\(|const\s+\w+\s*=|import\s+[\w{]/, weight: 0.8, needsTools: true },
   { capability: "data_analysis", re: /\b(analyze|analyse) (this )?(data|csv|spreadsheet|dataset|table)|pandas|chart|plot|regression|statistics\b/i, weight: 0.85, needsTools: true },
@@ -34,8 +35,8 @@ const PATTERNS: Array<{ capability: CapabilityCategory; re: RegExp; weight: numb
 ];
 
 const FRESHNESS_PATTERNS = [
-  /\b(today|yesterday|this week|this month|2025|2026|latest|current|recent|breaking|just (announced|released|happened))\b/i,
-  /\b(price|stock price|exchange rate|weather|election|score|release date|version \d)\b/i,
+  /\b(today|yesterday|this week|this month|latest|current|recent|breaking|just (announced|released|happened)|right now|as of now)\b/i,
+  /\b(20\d{2}|price|stock price|exchange rate|weather|election|score|release date|version \d)\b/i,
   /\b(who won|what happened|is .* (open|closed|available|down))\b/i,
 ];
 
@@ -84,7 +85,25 @@ export function classifyTask(text: string, opts?: { hasAttachments?: boolean; ha
       reasons.push("agent mode requested");
     }
   }
+  if (/\b(search the web|look up online|find online|browse the web)\b/i.test(text)) {
+    needsWeb = true;
+    needsTools = true;
+    reasons.push("explicit live-web request");
+    if (best === "conversation") best = "research";
+  }
   return { capability: best, confidence: Math.min(0.99, bestScore), needsWeb, needsTools, reasons };
+}
+
+export function resolveReasoningDepth(requested: ReasoningDepth | undefined, text: string): ReasoningDepth {
+  if (requested && requested !== "auto") return requested;
+  const normalized = text.trim();
+  const complex = /\b(prove|derive|debug|refactor|architecture|trade[- ]?off|root cause|multi[- ]step|step[- ]by[- ]step|comprehensive|evaluate|design|plan|analy[sz]e|compare|research|strategy|mathematical|optimi[sz]e|security review)\b/i.test(normalized)
+    || /```[\s\S]{30,}/.test(normalized)
+    || (normalized.match(/\b(and|then|also|because|however|versus|vs\.)\b/gi)?.length ?? 0) >= 4
+    || normalized.length > 1200;
+  if (complex) return "deep";
+  if (normalized.length < 180 && /^(what is|who is|where is|when is|define|translate|convert|how many|what does)\b/i.test(normalized)) return "fast";
+  return "balanced";
 }
 
 // ---------- Model selection ----------
@@ -95,13 +114,18 @@ export interface RouteDecision {
   capability: CapabilityCategory;
   confidence: number;
   mode: "auto" | "ask" | "manual";
+  reasoningDepth: ReasoningDepth;
   needsApproval: boolean;
   approvalQuestion?: string;
   candidates: Array<{ providerId: string; providerName: string; model: string; score: number; reason: string }>;
   fallbackChain: Array<{ providerId: string; model: string }>;
 }
 
-function scoreProvider(p: ResolvedProvider, capability: CapabilityCategory, prefs: { privacyMode: boolean }): { score: number; reason: string } {
+function scoreProvider(
+  p: ResolvedProvider,
+  capability: CapabilityCategory,
+  prefs: { privacyMode: boolean; reasoningDepth: ReasoningDepth; agentMode: boolean; needsWeb: boolean; estimatedContextTokens: number; modelContextWindow: number }
+): { score: number; reason: string } {
   let score = 50;
   const parts: string[] = [];
   if (!p.enabled) return { score: -1000, reason: "disabled" };
@@ -117,6 +141,15 @@ function scoreProvider(p: ResolvedProvider, capability: CapabilityCategory, pref
   }
   // Capability-specific heuristics on model name
   const m = (p.defaultModel || "").toLowerCase();
+  if (prefs.modelContextWindow > 0) {
+    const contextRatio = prefs.estimatedContextTokens / prefs.modelContextWindow;
+    if (contextRatio > 0.9) { score -= 80; parts.push("context-window-risk"); }
+    else if (contextRatio > 0.7) { score -= 18; parts.push("limited-context-headroom"); }
+    else if (prefs.estimatedContextTokens > 8192) {
+      const headroomBonus = Math.min(10, Math.floor((0.7 - contextRatio) * 15));
+      if (headroomBonus > 0) { score += headroomBonus; parts.push("context-headroom"); }
+    }
+  }
   if (capability === "coding" && /(code|coder|deepseek|sonnet|opus|o1|o3|gpt-4|claude)/.test(m)) { score += 12; parts.push("code-suited"); }
   if (capability === "reasoning" && /(o1|o3|opus|sonnet|reason|deepseek-r1|qwen.*max|gemini.*pro)/.test(m)) { score += 12; parts.push("reasoning-suited"); }
   if (capability === "research" && /(sonnet|gpt-4|gemini|grok|perplexity)/.test(m)) { score += 8; parts.push("research-suited"); }
@@ -127,6 +160,21 @@ function scoreProvider(p: ResolvedProvider, capability: CapabilityCategory, pref
     score += 6;
     parts.push("cloud-scale");
   }
+  if (prefs.reasoningDepth === "fast") {
+    if (p.isLocal || /mini|flash|haiku|small|instant|turbo/i.test(m)) { score += 12; parts.push("speed-and-cost"); }
+    if (/opus|o1|o3|deepseek-r1|gemini.*pro/i.test(m)) score -= 8;
+  } else if (["deep", "maximum"].includes(prefs.reasoningDepth)) {
+    if (/opus|sonnet|o[134]|gpt-5|deepseek-r1|qwen.*max|gemini.*pro/i.test(m)) {
+      score += prefs.reasoningDepth === "maximum" ? 20 : 14;
+      parts.push("high-reasoning-capability");
+    }
+    if (/mini|flash|haiku|small|instant/i.test(m)) score -= prefs.reasoningDepth === "maximum" ? 8 : 4;
+  }
+  if (prefs.needsWeb && /(sonnet|gpt-4|gpt-5|gemini|grok|perplexity|deepseek)/i.test(m)) {
+    score += 5;
+    parts.push("research-capable");
+  }
+  if (prefs.agentMode && /(tool|instruct|sonnet|gpt-4|gpt-5|gemini|qwen)/i.test(m)) score += 3;
   return { score, reason: parts.join(",") || "general" };
 }
 
@@ -139,17 +187,25 @@ export async function routeRequest(input: {
   agentMode?: boolean;
   hasAttachments?: boolean;
   hasImages?: boolean;
+  reasoningDepth?: ReasoningDepth;
+  estimatedContextTokens?: number;
 }): Promise<RouteDecision> {
   const settings = await getSettings();
   const mode = input.mode ?? settings.routingMode ?? "auto";
   const privacyMode = input.privacyMode ?? settings.privacyMode ?? false;
+  const requestedDepth = input.reasoningDepth ?? settings.reasoningDepth ?? "auto";
+  const reasoningDepth = resolveReasoningDepth(requestedDepth, input.text);
   const classification = classifyTask(input.text, {
     hasAttachments: input.hasAttachments,
     hasImages: input.hasImages,
     agentMode: input.agentMode,
   });
 
-  const allProviders = await listResolvedProviders({ enabledOnly: true });
+  const [allProviders, storedModels] = await Promise.all([
+    listResolvedProviders({ enabledOnly: true }),
+    listStoredModels().catch(() => []),
+  ]);
+  const estimatedContextTokens = Math.max(1, input.estimatedContextTokens ?? Math.ceil(input.text.length / 4) + 4096);
   const eligible = privacyMode ? allProviders.filter((p) => p.isLocal) : allProviders;
 
   if (!eligible.length) {
@@ -176,6 +232,7 @@ export async function routeRequest(input: {
       capability: classification.capability,
       confidence: classification.confidence,
       mode,
+      reasoningDepth,
       needsApproval: false,
       candidates: [],
       fallbackChain,
@@ -196,7 +253,17 @@ export async function routeRequest(input: {
 
   // Score all providers
   const scored = eligible
-    .map((p) => ({ p, ...scoreProvider(p, classification.capability, { privacyMode }) }))
+    .map((p) => ({
+      p,
+      ...scoreProvider(p, classification.capability, {
+        privacyMode,
+        reasoningDepth,
+        agentMode: Boolean(input.agentMode),
+        needsWeb: classification.needsWeb,
+        estimatedContextTokens,
+        modelContextWindow: Number(storedModels.find((model) => model.providerId === p.id && model.modelId === p.defaultModel)?.contextWindow || 0),
+      }),
+    }))
     .filter((s) => s.score > -1000)
     .sort((a, b) => b.score - a.score);
 
@@ -239,6 +306,7 @@ export async function routeRequest(input: {
       capability: classification.capability,
       confidence: classification.confidence,
       mode,
+      reasoningDepth,
       needsApproval: true,
       approvalQuestion: `This task looks like **${classification.capability}** (confidence ${Math.round(classification.confidence * 100)}%). I suggest **${chosen.name} / ${chosenModel}**. Use it?`,
       candidates,
@@ -252,6 +320,7 @@ export async function routeRequest(input: {
     capability: classification.capability,
     confidence: classification.confidence,
     mode,
+    reasoningDepth,
     needsApproval: false,
     candidates,
     fallbackChain,

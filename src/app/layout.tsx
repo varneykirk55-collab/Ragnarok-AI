@@ -3,8 +3,8 @@ import type { ReactNode } from "react";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Nexus — Personal AI Command Center",
-  description: "Local-first, self-hosted personal AI assistant. Multi-model, multi-tool, agent-capable, privacy-respecting.",
+  title: "Ragnarok — Personal AI Command Center",
+  description: "Ragnarok is a local-first, self-hosted personal AI assistant. Multi-model, multi-tool, agent-capable, privacy-respecting.",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

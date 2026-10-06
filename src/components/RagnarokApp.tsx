@@ -40,7 +40,7 @@ const NAV: Array<{ id: View; label: string; icon: React.ReactNode; group: string
   { id: "settings", label: "Settings", icon: <SettingsIcon size={17} />, group: "System" },
 ];
 
-export function NexusApp() {
+export function RagnarokApp() {
   const [view, setView] = useState<View>("chat");
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConv, setActiveConv] = useState<string | null>(null);
@@ -48,6 +48,7 @@ export function NexusApp() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const [globalPrivacy, setGlobalPrivacy] = useState(false);
+  const [sidebarFlagEnabled, setSidebarFlagEnabled] = useState(true);
   const [needsOnboarding, setNeedsOnboarding] = useState(false);
   const [focusTaskId, setFocusTaskId] = useState<string | null>(null);
   const [projectFilter, setProjectFilter] = useState<string | null>(null);
@@ -64,8 +65,9 @@ export function NexusApp() {
 
   const loadMeta = useCallback(async () => {
     try {
-      const s = await api<{ settings: { privacyMode: boolean; onboardingDone: boolean } }>("/api/settings");
+      const s = await api<{ settings: { privacyMode: boolean; onboardingDone: boolean; sidebarFlagEnabled?: boolean } }>("/api/settings");
       setGlobalPrivacy(Boolean(s.settings.privacyMode));
+      setSidebarFlagEnabled(s.settings.sidebarFlagEnabled !== false);
       const p = await api<{ providers: Array<{ enabled: boolean }> }>("/api/providers");
       if (!s.settings.onboardingDone && p.providers.length === 0) setNeedsOnboarding(true);
       const pr = await api<{ projects: typeof projects }>("/api/projects");
@@ -73,8 +75,14 @@ export function NexusApp() {
     } catch { /* ignore */ }
   }, []);
 
-  useEffect(() => { loadConversations(); }, [loadConversations, refreshKey]);
-  useEffect(() => { loadMeta(); }, [refreshKey]);
+  useEffect(() => {
+    const timer = window.setTimeout(() => { void loadConversations(); }, 0);
+    return () => window.clearTimeout(timer);
+  }, [loadConversations, refreshKey]);
+  useEffect(() => {
+    const timer = window.setTimeout(() => { void loadMeta(); }, 0);
+    return () => window.clearTimeout(timer);
+  }, [loadMeta, refreshKey]);
 
   useEffect(() => {
     const handler = (e: Event) => {
@@ -83,9 +91,15 @@ export function NexusApp() {
       setView("tasks");
       refresh();
     };
-    window.addEventListener("nexus:goto-tasks", handler);
-    return () => window.removeEventListener("nexus:goto-tasks", handler);
+    window.addEventListener("ragnarok:goto-tasks", handler);
+    return () => window.removeEventListener("ragnarok:goto-tasks", handler);
   }, [refresh]);
+
+  useEffect(() => {
+    const handler = () => { setView("connectors"); setSidebarOpen(false); };
+    window.addEventListener("ragnarok:goto-connectors", handler);
+    return () => window.removeEventListener("ragnarok:goto-connectors", handler);
+  }, []);
 
   const newConversation = async (projectId?: string) => {
     try {
@@ -103,14 +117,14 @@ export function NexusApp() {
   }, {});
 
   const sidebar = (
-    <div className="flex h-full flex-col">
+    <div className="relative z-10 flex h-full flex-col">
       {/* Brand */}
       <div className="flex items-center gap-2.5 px-4 pb-3 pt-4">
-        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 via-violet-500 to-fuchsia-500 shadow-lg shadow-indigo-500/25">
-          <Bot size={20} className="text-white" />
+        <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-[#b89a4a]/40 bg-[#10243a]">
+          <Bot size={20} className="text-[#d4ba70]" />
         </div>
         <div>
-          <div className="text-[15px] font-extrabold tracking-tight">Nexus</div>
+          <div className="text-[15px] font-extrabold tracking-tight">RAGNAROK</div>
           <div className="text-[10px] font-medium uppercase tracking-widest text-slate-500">Personal AI</div>
         </div>
         {globalPrivacy && (
@@ -199,16 +213,16 @@ export function NexusApp() {
   );
 
   return (
-    <div className="flex h-screen overflow-hidden bg-[#0a0c14] text-slate-100">
+    <div className="flex h-screen overflow-hidden bg-[#030405] text-slate-100">
       {/* Desktop sidebar */}
-      <aside className="hidden w-64 shrink-0 border-r border-white/10 bg-[#0d1019] md:block">
+      <aside className={(sidebarFlagEnabled ? "nordic-sidebar" : "plain-sidebar") + " hidden w-64 shrink-0 border-r border-white/10 md:block"}>
         {sidebar}
       </aside>
       {/* Mobile drawer */}
       {sidebarOpen && (
         <div className="fixed inset-0 z-40 md:hidden">
           <div className="absolute inset-0 bg-black/60" onClick={() => setSidebarOpen(false)} />
-          <aside className="absolute left-0 top-0 h-full w-72 border-r border-white/10 bg-[#0d1019]">
+          <aside className={(sidebarFlagEnabled ? "nordic-sidebar" : "plain-sidebar") + " absolute left-0 top-0 h-full w-72 border-r border-white/10"}>
             {sidebar}
           </aside>
         </div>
@@ -221,7 +235,7 @@ export function NexusApp() {
           <button onClick={() => setSidebarOpen(true)} className="rounded-lg p-2 hover:bg-white/10">
             <Menu size={18} />
           </button>
-          <span className="font-extrabold">Nexus</span>
+          <span className="font-extrabold">RAGNAROK</span>
           {globalPrivacy && <ShieldCheck size={14} className="text-emerald-300" />}
           <button onClick={() => newConversation()} className="ml-auto rounded-lg bg-indigo-500 p-2 text-white">
             <Plus size={16} />
@@ -282,7 +296,7 @@ function Onboarding({ onDone, onGoProviders }: { onDone: () => void; onGoProvide
   const steps = [
     {
       icon: <Bot size={36} className="text-white" />,
-      title: "Meet Nexus, your permanent assistant",
+      title: "Meet Ragnarok, your permanent assistant",
       body: "One interface to every model, tool, and project. Models are interchangeable brains — your memory, conversations, and workflows stay yours, locally.",
     },
     {

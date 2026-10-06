@@ -5,7 +5,7 @@ import { conversations, messages, memories, projects, toolPermissions, settings,
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    if (body.app !== "nexus-personal-ai") return NextResponse.json({ error: "Not a Nexus backup file." }, { status: 400 });
+    if (!["ragnarok-personal-ai", "nexus-personal-ai"].includes(body.app)) return NextResponse.json({ error: "Not a Ragnarok backup file." }, { status: 400 });
     const counts: Record<string, number> = {};
     // Restore in FK-safe order; skip duplicates by id where possible
     if (Array.isArray(body.projects)) {

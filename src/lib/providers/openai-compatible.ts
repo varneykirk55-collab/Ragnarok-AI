@@ -196,7 +196,16 @@ function makeAdapter(
         stream: true,
         stream_options: { include_usage: true },
       };
-      if (cOpts.maxTokens) body.max_tokens = cOpts.maxTokens;
+      const nativeReasoningModel = type === "openai" && /^(o[134](?:[-.]|$)|gpt-5(?:[-.]|$))/i.test(cOpts.model);
+      if (cOpts.maxTokens) {
+        if (nativeReasoningModel) body.max_completion_tokens = cOpts.maxTokens;
+        else body.max_tokens = cOpts.maxTokens;
+      }
+      if (nativeReasoningModel && cOpts.reasoningEffort) {
+        body.reasoning_effort = cOpts.reasoningEffort;
+        // OpenAI reasoning models reject temperature; effort is applied natively.
+        delete body.temperature;
+      }
       const tools = toOpenAITools(cOpts.tools);
       if (tools) body.tools = tools;
 

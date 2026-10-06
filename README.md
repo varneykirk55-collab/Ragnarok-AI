@@ -1,4 +1,4 @@
-# Nexus — Personal AI Command Center
+# Ragnarok — Personal AI Command Center
 
 A **local-first, self-hosted personal AI assistant** that acts as your single interface to
 multiple AI models, tools, files, web research, memory, projects, and autonomous agents.
@@ -9,7 +9,7 @@ multiple AI models, tools, files, web research, memory, projects, and autonomous
                   USER
                    │
                    ▼
-        PERSONAL AI INTERFACE (Nexus)
+        PERSONAL AI INTERFACE (Ragnarok)
                    │
                    ▼
           ORCHESTRATOR / AGENT
@@ -31,7 +31,15 @@ multiple AI models, tools, files, web research, memory, projects, and autonomous
 - **Fallback routing** — provider fallback models → other providers → honest error. Handles
   auth failures, rate limits, retired models, timeouts, outages.
 - **Real web research** — modular search (free DuckDuckGo+Wikipedia built in; optional
-  Tavily / Brave / Serper / self-hosted SearXNG), page fetching, citations, fact-check mode.
+  Tavily / Brave / Serper / self-hosted SearXNG), safe page retrieval, citations, fact-check mode.
+  Chat Web Access can be Auto / On / Off; live sources are cited and external page content is untrusted data.
+- **Reasoning controls** — Auto / Fast / Balanced / Deep / Maximum effort, saved defaults, per-chat override,
+  complexity-aware routing, and native provider effort controls where supported.
+- **Two-way browser voice** — push-to-talk and continuous spoken conversations using browser speech recognition
+  and installed system voices; saved voice profiles, voice preview, wake phrase, timeout, mute, interrupt, and clear mic state.
+  Speech recognition requires a supported browser and microphone permission; some browsers process recognition through
+  their own hosted service. Ragnarok does not store raw audio. Wake phrases are best-effort browser recognition, not an
+  always-on OS service, and may stop in background tabs or on locked devices.
 - **Agent mode** — goal → plan → tools → observe → complete, with activity feed, approvals,
   STOP, pause/resume, retry limits, persistent history.
 - **Permissions** — per-tool policies (Always allow / Ask / Always ask / Disabled) +
@@ -58,7 +66,7 @@ multiple AI models, tools, files, web research, memory, projects, and autonomous
 ## Quick start (Docker — recommended for local self-hosting)
 
 ```bash
-git clone <this-repo> && cd nexus
+git clone <this-repo> && cd Ragnarok-AI
 cp .env.example .env
 # edit .env: set SECRET_ENCRYPTION_KEY to a long random string
 docker compose up --build
@@ -67,7 +75,7 @@ docker compose up --build
 Then open **http://localhost:3000**.
 
 Services: `app` (Next.js) + `db` (PostgreSQL 16). Data persists in Docker volumes
-(`nexus-db-data`, `nexus-workspaces`).
+(`nexus-db-data`, `nexus-workspaces`; legacy Docker volume names are retained so existing data mounts continue to work).
 
 ## Quick start (bare metal)
 
@@ -105,7 +113,7 @@ ollama pull llama3.1        # general chat
 ollama pull qwen2.5-coder   # coding
 ```
 
-Then add an **Ollama (local)** provider in Nexus pointing at `http://localhost:11434`.
+Then add an **Ollama (local)** provider in Ragnarok pointing at `http://localhost:11434`.
 Enable **Privacy Mode** to force local-only operation.
 
 ## Automations scheduler (optional)
@@ -114,7 +122,7 @@ Automations store schedules in the DB. To run due automations in the background:
 
 ```bash
 # every minute via cron:
-* * * * * cd /path/to/nexus && npx tsx scripts/scheduler.ts >> data/scheduler.log 2>&1
+* * * * * cd /path/to/Ragnarok-AI && npx tsx scripts/scheduler.ts >> data/scheduler.log 2>&1
 ```
 
 Or run once manually: `npx tsx scripts/scheduler.ts --once`.

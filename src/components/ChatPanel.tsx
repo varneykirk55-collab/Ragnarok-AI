@@ -8,6 +8,8 @@ import {
 } from "lucide-react";
 import { api, streamChat, timeAgo } from "@/lib/client-api";
 import { Markdown } from "./Markdown";
+import { VoiceControls } from "./VoiceControls";
+import type { ReasoningDepth } from "@/lib/voice/config";
 
 interface Message {
   id: string;
@@ -75,7 +77,10 @@ export function ChatPanel({
   const [verifyingId, setVerifyingId] = useState<string | null>(null);
   const [verification, setVerification] = useState<{ id: string; text: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [webNotice, setWebNotice] = useState<string | null>(null);
+  const [reasoningDepth, setReasoningDepth] = useState<ReasoningDepth>("auto");
   const abortRef = useRef<(() => void) | null>(null);
+  const tempMessageSequenceRef = useRef(0);
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -102,8 +107,19 @@ export function ChatPanel({
     } catch { /* ignore */ }
   }, []);
 
-  useEffect(() => { loadConversation(); }, [loadConversation, refreshKey]);
-  useEffect(() => { loadProviders(); }, [refreshKey]);
+  useEffect(() => {
+    const timer = window.setTimeout(() => { void loadConversation(); }, 0);
+    return () => window.clearTimeout(timer);
+  }, [loadConversation, refreshKey]);
+  useEffect(() => {
+    const timer = window.setTimeout(() => { void loadProviders(); }, 0);
+    return () => window.clearTimeout(timer);
+  }, [loadProviders, refreshKey]);
+  useEffect(() => {
+    api<{ settings: { reasoningDepth?: ReasoningDepth } }>("/api/settings")
+      .then((data) => setReasoningDepth(data.settings.reasoningDepth || "auto"))
+      .catch(() => {});
+  }, [refreshKey]);
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, streamText]);
 
   const patchConv = async (patch: Record<string, unknown>) => {
@@ -112,35 +128,40 @@ export function ChatPanel({
     setConv({ ...conv, ...patch } as Conversation);
   };
 
-  const send = async (overrideText?: string, confirmRoute?: { providerId: string; model: string }) => {
+  const send = async (overrideText?: string, confirmRoute?: { providerId: string; model: string }): Promise<string> => {
     const text = (overrideText ?? input).trim();
-    if ((!text && !attachments.length) || streaming || !conv) return;
+    if ((!text && !attachments.length) || streaming || !conv) return "";
     setInput("");
     setError(null);
+    setWebNotice(null);
     setAskRoute(null);
     setStreamText("");
     setStreamMeta(null);
     setToolEvents([]);
     setStreaming(true);
     // optimistic user message
-    const tempId = `temp-${Date.now()}`;
+    const tempId = `temp-${++tempMessageSequenceRef.current}`;
     setMessages((m) => [...m, { id: tempId, role: "user", content: text, createdAt: new Date().toISOString() }]);
     let acc = "";
+    let streamFailed = false;
+    let awaitingRoute = false;
     const { abort, done } = streamChat(
-      { conversationId: conv.id, content: text, attachments, confirmRoute },
+      { conversationId: conv.id, content: text, attachments, confirmRoute, reasoningDepth },
       {
         onMeta: (meta) => setStreamMeta(meta),
         onToken: (t) => { acc += t; setStreamText(acc); },
         onTool: (info) => setToolEvents((e) => [...e, info]),
-        onAskRoute: (info) => setAskRoute(info),
-        onError: (msg) => setError(msg),
-        onDone: () => {},
+        onAskRoute: (info) => { awaitingRoute = true; setAskRoute(info); },
+        onNotice: (info) => setWebNotice(String(info.message || "Live retrieval could not be completed.")),
+        onError: (msg) => { streamFailed = true; setError(msg); },
+        onDone: (info) => { if (info.error || info.awaitingRouteConfirm) awaitingRoute = true; },
       }
     );
     abortRef.current = abort;
     try {
       await done;
     } catch {
+      streamFailed = true;
       setError("Generation stopped.");
     } finally {
       setStreaming(false);
@@ -149,6 +170,7 @@ export function ChatPanel({
       await loadConversation();
       setStreamText("");
     }
+    return streamFailed || awaitingRoute ? "" : acc;
   };
 
   const stop = () => {
@@ -223,17 +245,20 @@ export function ChatPanel({
     setAttachments((a) => [...a, ...out]);
   };
 
-  const startAgentTask = async () => {
-    if (!conv || !input.trim()) return;
+  const startAgentTask = async (goalOverride?: string, fromVoice = false): Promise<string> => {
+    const goal = (goalOverride ?? input).trim();
+    if (!conv || !goal) return "";
     try {
       const data = await api<{ task: { id: string } }>("/api/agent/tasks", {
         method: "POST",
-        json: { goal: input.trim(), conversationId: conv.id, projectId: conv.projectId, privacyMode: conv.privacyMode || globalPrivacy },
+        json: { goal, conversationId: conv.id, projectId: conv.projectId, privacyMode: conv.privacyMode || globalPrivacy },
       });
       setInput("");
-      window.dispatchEvent(new CustomEvent("nexus:goto-tasks", { detail: { taskId: data.task.id } }));
+      if (!fromVoice) window.dispatchEvent(new CustomEvent("ragnarok:goto-tasks", { detail: { taskId: data.task.id } }));
+      return "The agent task has started. You can follow its plan, tool actions, and approvals in Agent Tasks.";
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+      return "";
     }
   };
 
@@ -281,6 +306,24 @@ export function ChatPanel({
             <option value="auto">⚡ Auto route</option>
             <option value="ask">❓ Ask me</option>
             <option value="manual">🎯 Manual</option>
+          </select>
+          <select
+            aria-label="Reasoning effort"
+            value={reasoningDepth}
+            onChange={async (e) => {
+              const next = e.target.value as ReasoningDepth;
+              setReasoningDepth(next);
+              try { await api("/api/settings", { method: "PATCH", json: { reasoningDepth: next } }); }
+              catch (err) { setError(err instanceof Error ? err.message : String(err)); }
+            }}
+            className="max-w-[142px] rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs text-slate-200"
+            title="Reasoning effort for this request and as the saved default. Native model controls are used when available."
+          >
+            <option value="auto">Reasoning · Auto</option>
+            <option value="fast">Reasoning · Fast</option>
+            <option value="balanced">Reasoning · Balanced</option>
+            <option value="deep">Reasoning · Deep</option>
+            <option value="maximum">Reasoning · Maximum</option>
           </select>
           {/* Model selector (manual) */}
           {(conv.routingMode === "manual" || conv.selectedModel) && (
@@ -462,6 +505,8 @@ export function ChatPanel({
                       {String(streamMeta["provider"] || "")} / {String(streamMeta["model"] || "")}
                     </span>
                     {streamMeta["capability"] ? <span className="rounded bg-white/10 px-1.5 py-0.5">{String(streamMeta["capability"])}</span> : null}
+                    {streamMeta["reasoningDepth"] ? <span className="rounded bg-white/10 px-1.5 py-0.5">Reasoning: {String(streamMeta["reasoningDepth"])}</span> : null}
+                    {streamMeta["liveSearch"] ? <span className="rounded bg-sky-500/15 px-1.5 py-0.5 text-sky-200">Live sources</span> : null}
                     <span className="animate-pulse-dot text-emerald-300">● streaming</span>
                   </div>
                 )}
@@ -485,6 +530,12 @@ export function ChatPanel({
               </div>
             </div>
           )}
+          {webNotice && (
+            <div role="status" className="mx-auto max-w-3xl rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-100">
+              {webNotice}
+              <button onClick={() => setWebNotice(null)} className="ml-2 text-xs underline">Dismiss</button>
+            </div>
+          )}
           {error && (
             <div className="mx-auto max-w-3xl rounded-xl border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-200">
               {error}
@@ -498,6 +549,13 @@ export function ChatPanel({
       {/* Composer */}
       <div className="border-t border-white/10 p-3">
         <div className="mx-auto max-w-3xl">
+          <div className="mb-2">
+            <VoiceControls
+              busy={streaming}
+              onStopResponse={stop}
+              onVoiceRequest={async (spokenText) => conv.agentMode ? startAgentTask(spokenText, true) : send(spokenText)}
+            />
+          </div>
           {attachments.length > 0 && (
             <div className="mb-2 flex flex-wrap gap-2">
               {attachments.map((a, i) => (
@@ -525,7 +583,7 @@ export function ChatPanel({
                   else send();
                 }
               }}
-              placeholder={conv.agentMode ? "Describe a goal for the agent — it will plan, use tools, and ask for approvals…" : "Message Nexus… (Enter to send, Shift+Enter for newline)"}
+              placeholder={conv.agentMode ? "Describe a goal for the agent — it will plan, use tools, and ask for approvals…" : "Message Ragnarok… (Enter to send, Shift+Enter for newline)"}
               className="max-h-40 min-h-[44px] flex-1 resize-y bg-transparent px-1 py-2 text-sm outline-none placeholder:text-slate-500"
               rows={2}
             />
@@ -534,7 +592,7 @@ export function ChatPanel({
                 <Square size={16} /> Stop
               </button>
             ) : conv.agentMode ? (
-              <button onClick={startAgentTask} disabled={!input.trim()} className="flex items-center gap-1 rounded-xl bg-fuchsia-500 px-4 py-2.5 text-sm font-bold text-white hover:bg-fuchsia-400 disabled:opacity-40" title="Start agent task">
+              <button onClick={() => startAgentTask()} disabled={!input.trim()} className="flex items-center gap-1 rounded-xl bg-fuchsia-500 px-4 py-2.5 text-sm font-bold text-white hover:bg-fuchsia-400 disabled:opacity-40" title="Start agent task">
                 <ListChecks size={16} /> Run
               </button>
             ) : (

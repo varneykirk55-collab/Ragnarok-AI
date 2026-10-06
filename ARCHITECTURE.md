@@ -1,11 +1,11 @@
-# Nexus Architecture
+# Ragnarok Architecture
 
 ## Design principle
 
 **The assistant is permanent. Models, providers, and tools are interchangeable.**
 
 ```
-User → Nexus UI → Orchestrator (chat route / agent runner)
+User → Ragnarok UI → Orchestrator (chat route / agent runner)
                       ├── Model Router (classify → score → select → fallback)
                       ├── Tool Router (registry → permissions → approvals → execute)
                       ├── Context Builder (immediate + project + memory + tool layers)
@@ -16,7 +16,7 @@ User → Nexus UI → Orchestrator (chat route / agent runner)
 
 | Area | Location | Notes |
 |---|---|---|
-| UI shell | `src/components/NexusApp.tsx` | Sidebar + views, responsive, mobile drawer |
+| UI shell | `src/components/RagnarokApp.tsx` | Sidebar + views, responsive, mobile drawer |
 | Chat | `src/components/ChatPanel.tsx`, `src/app/api/chat/route.ts` | SSE streaming, tool rounds, ask-mode |
 | Providers | `src/lib/providers/*` | `ProviderAdapter` interface + 6 adapters |
 | Routing | `src/lib/router/router.ts` | Classification + scoring + fallback chains |

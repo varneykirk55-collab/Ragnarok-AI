@@ -51,6 +51,7 @@ export interface ChatOptions {
   messages: ChatMessage[];
   temperature?: number;
   maxTokens?: number;
+  reasoningEffort?: "low" | "medium" | "high";
   stream?: boolean;
   tools?: ToolSchema[];
   signal?: AbortSignal;

@@ -1,6 +1,7 @@
 import { db } from "@/db";
 import { settings } from "@/db/schema";
 import { eq } from "drizzle-orm";
+import { DEFAULT_VOICE_PREFERENCES, normalizeVoicePreferences, type ReasoningDepth, type WebAccessMode, type VoicePreferences } from "./voice/config";
 
 export type AppSettings = {
   routingMode: "auto" | "ask" | "manual";
@@ -18,6 +19,10 @@ export type AppSettings = {
   appearanceTheme: "dark" | "light" | "system";
   workspaceRoot: string;
   onboardingDone: boolean;
+  reasoningDepth: ReasoningDepth;
+  webAccess: WebAccessMode;
+  voicePreferences: VoicePreferences;
+  sidebarFlagEnabled: boolean;
 };
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -36,6 +41,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   appearanceTheme: "dark",
   workspaceRoot: "./data/workspaces",
   onboardingDone: false,
+  reasoningDepth: "auto",
+  webAccess: "auto",
+  voicePreferences: DEFAULT_VOICE_PREFERENCES,
+  sidebarFlagEnabled: true,
 };
 
 export async function getSettings(): Promise<AppSettings> {
@@ -45,10 +54,14 @@ export async function getSettings(): Promise<AppSettings> {
     for (const r of rows) {
       merged[r.key] = r.value;
     }
-    return {
+    const result = {
       ...(DEFAULT_SETTINGS as Record<string, unknown>),
       ...merged,
     } as AppSettings;
+    result.voicePreferences = normalizeVoicePreferences(result.voicePreferences);
+    if (!["auto", "fast", "balanced", "deep", "maximum"].includes(result.reasoningDepth)) result.reasoningDepth = "auto";
+    if (!["auto", "on", "off"].includes(result.webAccess)) result.webAccess = "auto";
+    return result;
   } catch {
     return { ...DEFAULT_SETTINGS };
   }
