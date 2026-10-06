@@ -1,10 +1,10 @@
 /**
- * Nexus automation scheduler (V1).
+ * Ragnarok automation scheduler (V1).
  *
  * Polls the `automations` table for due interval-based automations and
  * launches agent tasks for them. Run every minute via cron:
  *
- *   * * * * * cd /path/to/nexus && npx tsx scripts/scheduler.ts >> data/scheduler.log 2>&1
+ *   * * * * * cd /path/to/Ragnarok-AI && npx tsx scripts/scheduler.ts >> data/scheduler.log 2>&1
  *
  * Or once: npx tsx scripts/scheduler.ts --once
  */

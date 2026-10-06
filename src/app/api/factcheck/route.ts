@@ -12,7 +12,7 @@ export async function POST(req: NextRequest) {
     const claim = String(body.claim || "").trim();
     if (!claim) return NextResponse.json({ error: "Claim required" }, { status: 400 });
     const settings = await getSettings();
-    const privacyMode = body.privacyMode ?? settings.privacyMode;
+    const privacyMode = Boolean(body.privacyMode || settings.privacyMode);
 
     // 1. Search for evidence (2-3 queries)
     const queries = [claim.slice(0, 300), `${claim.slice(0, 200)} fact check`, `${claim.slice(0, 200)} evidence`];
@@ -27,11 +27,13 @@ export async function POST(req: NextRequest) {
     }
     // 2. Fetch top pages for depth
     const pages: Array<{ title: string; text: string; url: string }> = [];
-    for (const hit of allResults.slice(0, 4)) {
-      try {
-        const p = await fetchWebpage(hit.url, { maxChars: 6000 });
-        pages.push(p);
-      } catch { /* skip */ }
+    if (!privacyMode) {
+      for (const hit of allResults.slice(0, 4)) {
+        try {
+          const p = await fetchWebpage(hit.url, { maxChars: 6000 });
+          pages.push(p);
+        } catch { /* skip unsafe or inaccessible pages */ }
+      }
     }
     if (!allResults.length) {
       return NextResponse.json({

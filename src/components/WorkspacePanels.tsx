@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   FolderKanban, Plus, Trash2, Loader2, Brain, Pin, PinOff, Pencil, Search,
   FlaskConical, ExternalLink, Image as ImageIcon, FolderOpen, FileText, Upload, Eye, CheckCircle2, AlertTriangle,
@@ -16,13 +16,16 @@ export function ProjectsPanel({ refreshKey, onChanged, onOpenProject }: { refres
   const [editing, setEditing] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     try {
       const data = await api<{ projects: typeof projects }>("/api/projects");
       setProjects(data.projects);
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
-  };
-  useEffect(() => { load(); }, [refreshKey]);
+  }, []);
+  useEffect(() => {
+    const timer = window.setTimeout(() => { void load(); }, 0);
+    return () => window.clearTimeout(timer);
+  }, [load, refreshKey]);
 
   const save = async () => {
     try {
@@ -118,16 +121,19 @@ export function MemoryPanel({ refreshKey }: { refreshKey: number }) {
   const [memoryEnabled, setMemoryEnabled] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     try {
       const data = await api<{ memories: typeof memories }>(`/api/memories?q=${encodeURIComponent(search)}&category=${category}`);
       setMemories(data.memories);
       const s = await api<{ settings: { memoryEnabled: boolean } }>("/api/settings");
       setMemoryEnabled(s.settings.memoryEnabled);
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
-  };
-  useEffect(() => { load(); }, [refreshKey]);
-  useEffect(() => { const t = setTimeout(load, 300); return () => clearTimeout(t); }, [search, category]);
+  }, [search, category]);
+  useEffect(() => {
+    const timer = window.setTimeout(() => { void load(); }, 0);
+    return () => window.clearTimeout(timer);
+  }, [load, refreshKey]);
+  useEffect(() => { const timer = window.setTimeout(() => { void load(); }, 300); return () => window.clearTimeout(timer); }, [load]);
 
   const save = async () => {
     try {
@@ -242,17 +248,24 @@ export function FilesPanel({ refreshKey, projectFilter }: { refreshKey: number; 
   const [preview, setPreview] = useState<{ path: string; content: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => { if (projectFilter) setProjectId(projectFilter); }, [projectFilter]);
+  useEffect(() => {
+    if (!projectFilter) return;
+    const timer = window.setTimeout(() => setProjectId(projectFilter), 0);
+    return () => window.clearTimeout(timer);
+  }, [projectFilter]);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     try {
       const p = await api<{ projects: typeof projects }>("/api/projects");
       setProjects(p.projects);
       const f = await api<{ files: typeof files }>(`/api/files?projectId=${projectId}`);
       setFiles(f.files);
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
-  };
-  useEffect(() => { load(); }, [refreshKey, projectId]);
+  }, [projectId]);
+  useEffect(() => {
+    const timer = window.setTimeout(() => { void load(); }, 0);
+    return () => window.clearTimeout(timer);
+  }, [load, refreshKey]);
 
   const upload = async (fl: FileList | null) => {
     if (!fl?.length) return;

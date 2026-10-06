@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { CheckCircle2, Loader2, Plug, Plus, RefreshCw, Trash2, XCircle, Power, KeyRound, ChevronDown } from "lucide-react";
 import { api } from "@/lib/client-api";
 
@@ -56,7 +56,7 @@ export function ProvidersPanel({ refreshKey, onChanged }: { refreshKey: number; 
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     try {
       const data = await api<{ providers: Provider[] }>("/api/providers");
@@ -66,9 +66,12 @@ export function ProvidersPanel({ refreshKey, onChanged }: { refreshKey: number; 
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  useEffect(() => { load(); }, [refreshKey]);
+  useEffect(() => {
+    const timer = window.setTimeout(() => { void load(); }, 0);
+    return () => window.clearTimeout(timer);
+  }, [load, refreshKey]);
 
   const addProvider = async () => {
     setError(null);
@@ -330,15 +333,18 @@ export function ConnectorsPanel({ refreshKey }: { refreshKey: number }) {
   const [showAdd, setShowAdd] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     try {
       const data = await api<{ connectors: typeof connectors }>("/api/connectors");
       setConnectors(data.connectors);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
-  };
-  useEffect(() => { load(); }, [refreshKey]);
+  }, []);
+  useEffect(() => {
+    const timer = window.setTimeout(() => { void load(); }, 0);
+    return () => window.clearTimeout(timer);
+  }, [load, refreshKey]);
 
   const add = async () => {
     try {

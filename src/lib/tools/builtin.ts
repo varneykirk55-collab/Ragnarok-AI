@@ -2,9 +2,10 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { execFile } from "node:child_process";
 import type { ToolDefinition } from "./types";
-import { webSearch, fetchWebpage } from "../search/providers";
+import { assertPublicHttpUrl, webSearch, fetchWebpage } from "../search/providers";
 import { safeResolve, listWorkspaceFiles, isTextReadable } from "../files/workspace";
 import { listMemories, createMemory } from "../memory/store";
+import { getSettings } from "../server-settings";
 
 const MAX_FILE_READ = 60000;
 
@@ -29,7 +30,9 @@ const searchWeb: ToolDefinition = {
   async execute(input, ctx) {
     const { query, max_results } = parseArgs<{ query: string; max_results?: number }>(input);
     if (!query?.trim()) return { ok: false, output: null, summary: "Empty query", error: "Query is required" };
-    const res = await webSearch(query.trim(), { maxResults: Math.min(15, Math.max(1, max_results ?? 8)), privacyMode: ctx.privacyMode, signal: ctx.signal });
+    const settings = await getSettings();
+    if (settings.webAccess === "off") return { ok: false, output: null, summary: "Blocked by Web Access setting", error: "Web Access is OFF for chat and agent requests." };
+    const res = await webSearch(query.trim(), { maxResults: Math.min(15, Math.max(1, max_results ?? 8)), privacyMode: ctx.privacyMode || settings.privacyMode, signal: ctx.signal });
     return {
       ok: true,
       output: res,
@@ -55,8 +58,13 @@ const fetchWebpageTool: ToolDefinition = {
   },
   async execute(input, ctx) {
     const { url, max_chars } = parseArgs<{ url: string; max_chars?: number }>(input);
+    const settings = await getSettings();
+    if (settings.webAccess === "off") return { ok: false, output: null, summary: "Blocked by Web Access setting", error: "Web Access is OFF for chat and agent requests." };
+    if (ctx.privacyMode || settings.privacyMode) return { ok: false, output: null, summary: "Blocked by Privacy Mode", error: "Privacy Mode prevents fetching public webpages." };
     const page = await fetchWebpage(url, { maxChars: Math.min(30000, max_chars ?? 12000), signal: ctx.signal });
-    return { ok: true, output: page, summary: `Fetched ${page.title} (${page.text.length} chars)` };
+    let source = "web";
+    try { source = new URL(page.url).hostname; } catch { /* preserve source label */ }
+    return { ok: true, output: page, summary: `Fetched ${page.title} (${page.text.length} chars)`, citations: [{ title: page.title, url: page.url, source }] };
   },
 };
 
@@ -216,16 +224,18 @@ const callApi: ToolDefinition = {
   async execute(input, ctx) {
     const { url, method, headers, body } = parseArgs<{ url: string; method?: string; headers?: Record<string, string>; body?: string }>(input);
     let parsed: URL;
-    try { parsed = new URL(url); } catch { return { ok: false, output: null, summary: "Invalid URL", error: "Invalid URL" }; }
-    if (!["http:", "https:"].includes(parsed.protocol)) return { ok: false, output: null, summary: "Blocked protocol", error: "Only http(s) allowed" };
+    try { parsed = await assertPublicHttpUrl(url); }
+    catch (e) { return { ok: false, output: null, summary: "Blocked or invalid URL", error: e instanceof Error ? e.message : "Invalid URL" }; }
     const host = parsed.hostname.toLowerCase();
-    if (host === "localhost" || host === "127.0.0.1" || host === "0.0.0.0" || host.endsWith(".local"))
-      return { ok: false, output: null, summary: "Blocked host", error: "Local network URLs are blocked." };
+    const settings = await getSettings();
+    if (settings.webAccess === "off") return { ok: false, output: null, summary: "Blocked by Web Access setting", error: "Web Access is OFF for chat and agent requests." };
+    if (ctx.privacyMode || settings.privacyMode) return { ok: false, output: null, summary: "Blocked by Privacy Mode", error: "Privacy Mode prevents external API calls." };
     const res = await fetch(parsed.toString(), {
       method: method || "GET",
-      headers: { "User-Agent": "Nexus-Personal-AI/1.0", ...(headers || {}) },
+      headers: { "User-Agent": "Ragnarok-AI/1.0", ...(headers || {}) },
       body: body && method !== "GET" ? body : undefined,
       signal: ctx.signal ?? AbortSignal.timeout(20000),
+      redirect: "manual",
     });
     const text = await res.text().catch(() => "");
     return {

@@ -6,7 +6,7 @@ export async function GET() {
   try {
     const data = {
       exportedAt: new Date().toISOString(),
-      app: "nexus-personal-ai",
+      app: "ragnarok-personal-ai",
       version: 1,
       conversations: await db.select().from(conversations).catch(() => []),
       messages: await db.select().from(messages).catch(() => []),
@@ -23,7 +23,7 @@ export async function GET() {
       notice: "API keys are never exported. Re-enter provider credentials after restore.",
     };
     return new NextResponse(JSON.stringify(data, null, 2), {
-      headers: { "Content-Type": "application/json", "Content-Disposition": `attachment; filename="nexus-backup-${new Date().toISOString().slice(0, 10)}.json"` },
+      headers: { "Content-Type": "application/json", "Content-Disposition": `attachment; filename="ragnarok-backup-${new Date().toISOString().slice(0, 10)}.json"` },
     });
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 });

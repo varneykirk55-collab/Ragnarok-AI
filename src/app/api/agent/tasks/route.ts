@@ -28,7 +28,7 @@ export async function POST(req: NextRequest) {
       projectId: body.projectId || null,
       status: "pending",
       maxSteps: body.maxSteps || settings.agentMaxSteps || 25,
-      privacyMode: body.privacyMode ?? settings.privacyMode ?? false,
+      privacyMode: Boolean(body.privacyMode || settings.privacyMode),
       routingMode: body.routingMode || settings.routingMode || "auto",
     }).returning();
     // Start in background (fire and forget; UI polls)

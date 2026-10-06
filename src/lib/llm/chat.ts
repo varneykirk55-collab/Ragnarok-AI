@@ -21,6 +21,7 @@ export async function chatWithFallback(input: {
   tools?: ToolSchema[];
   temperature?: number;
   maxTokens?: number;
+  reasoningEffort?: "low" | "medium" | "high";
   signal?: AbortSignal;
   onToken?: (token: string) => void;
   onAttempt?: (attempt: AttemptInfo) => void;
@@ -63,6 +64,7 @@ export async function chatWithFallback(input: {
         tools: input.tools,
         temperature: input.temperature,
         maxTokens: input.maxTokens,
+        reasoningEffort: input.reasoningEffort,
         signal: input.signal,
         onToken: i === 0 || attempts.some((a) => a.ok) ? input.onToken : undefined, // stream only meaningful attempt; fallback streams too
       });

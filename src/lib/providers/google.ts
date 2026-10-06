@@ -80,6 +80,13 @@ export const googleAdapter: ProviderAdapter = {
       generationConfig: { temperature: cOpts.temperature ?? 0.7, maxOutputTokens: cOpts.maxTokens ?? 4096 },
     };
     if (system) body.systemInstruction = { parts: [{ text: system }] };
+    if (cOpts.reasoningEffort && /\bgemini-3(?:[-.]|$)/i.test(cOpts.model)) {
+      const level = cOpts.reasoningEffort === "low" ? "low" : cOpts.reasoningEffort === "medium" ? "medium" : "high";
+      body.generationConfig = { ...(body.generationConfig as Record<string, unknown>), thinkingConfig: { thinkingLevel: level } };
+    } else if (cOpts.reasoningEffort && /\bgemini-2\.5/i.test(cOpts.model)) {
+      const budget = cOpts.reasoningEffort === "low" ? 1024 : cOpts.reasoningEffort === "medium" ? 4096 : 24576;
+      body.generationConfig = { ...(body.generationConfig as Record<string, unknown>), thinkingConfig: { thinkingBudget: budget } };
+    }
     if (cOpts.tools?.length)
       body.tools = [{ functionDeclarations: cOpts.tools.map((t) => ({ name: t.name, description: t.description, parameters: t.parameters })) }];
 

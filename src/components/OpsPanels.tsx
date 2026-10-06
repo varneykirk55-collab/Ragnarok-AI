@@ -1,13 +1,14 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Bot, Check, ChevronDown, Clock, Loader2, OctagonX, Play, Plus, RefreshCw,
   ShieldAlert, Trash2, Wrench, X, Zap, CalendarClock, DollarSign, Settings as SettingsIcon,
-  Download, Upload, ScrollText, Pause,
+  Download, Upload, ScrollText, Pause, Brain, Search, ShieldCheck,
 } from "lucide-react";
 import { api, timeAgo } from "@/lib/client-api";
 import { Markdown } from "./Markdown";
+import { VoiceSettingsPanel } from "./VoiceSettingsPanel";
 
 // ---------------- Tasks (Agent) ----------------
 interface Task {
@@ -44,32 +45,43 @@ export function TasksPanel({ refreshKey, focusTaskId }: { refreshKey: number; fo
   const [error, setError] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  useEffect(() => { if (focusTaskId) setSelected(focusTaskId); }, [focusTaskId]);
+  useEffect(() => {
+    if (!focusTaskId) return;
+    const timer = window.setTimeout(() => setSelected(focusTaskId), 0);
+    return () => window.clearTimeout(timer);
+  }, [focusTaskId]);
 
-  const loadList = async () => {
+  const loadList = useCallback(async () => {
     try {
       const data = await api<{ tasks: Task[] }>("/api/agent/tasks");
       setTasks(data.tasks);
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
-  };
+  }, []);
 
-  const loadDetail = async (id: string) => {
+  const loadDetail = useCallback(async (id: string) => {
     try {
       const data = await api<typeof detail & {}>(`/api/agent/tasks/${id}`);
       setDetail(data as typeof detail);
     } catch { /* ignore transient */ }
-  };
+  }, []);
 
-  useEffect(() => { loadList(); }, [refreshKey]);
+  useEffect(() => {
+    const timer = window.setTimeout(() => { void loadList(); }, 0);
+    return () => window.clearTimeout(timer);
+  }, [loadList, refreshKey]);
   useEffect(() => {
     if (pollRef.current) clearInterval(pollRef.current);
     pollRef.current = setInterval(() => {
-      loadList();
-      if (selected) loadDetail(selected);
+      void loadList();
+      if (selected) void loadDetail(selected);
     }, 3000);
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
-  }, [selected]);
-  useEffect(() => { if (selected) loadDetail(selected); }, [selected]);
+  }, [selected, loadList, loadDetail]);
+  useEffect(() => {
+    if (!selected) return;
+    const timer = window.setTimeout(() => { void loadDetail(selected); }, 0);
+    return () => window.clearTimeout(timer);
+  }, [selected, loadDetail]);
 
   const start = async () => {
     if (!newGoal.trim()) return;
@@ -234,13 +246,16 @@ export function ToolsPanel({ refreshKey, onChanged }: { refreshKey: number; onCh
   const [tools, setTools] = useState<Array<{ name: string; description: string; category: string; riskLevel: string; policy: string; available: boolean }>>([]);
   const [error, setError] = useState<string | null>(null);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     try {
       const data = await api<{ tools: typeof tools }>("/api/tools");
       setTools(data.tools);
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
-  };
-  useEffect(() => { load(); }, [refreshKey]);
+  }, []);
+  useEffect(() => {
+    const timer = window.setTimeout(() => { void load(); }, 0);
+    return () => window.clearTimeout(timer);
+  }, [load, refreshKey]);
 
   const setPolicy = async (name: string, policy: string) => {
     try {
@@ -335,13 +350,16 @@ export function AutomationsPanel({ refreshKey }: { refreshKey: number }) {
   const [form, setForm] = useState({ name: "", goal: "", scheduleKind: "interval", scheduleValue: "1440" });
   const [error, setError] = useState<string | null>(null);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     try {
       const data = await api<{ automations: typeof items }>("/api/automations");
       setItems(data.automations);
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
-  };
-  useEffect(() => { load(); }, [refreshKey]);
+  }, []);
+  useEffect(() => {
+    const timer = window.setTimeout(() => { void load(); }, 0);
+    return () => window.clearTimeout(timer);
+  }, [load, refreshKey]);
 
   const save = async () => {
     try {
@@ -426,18 +444,24 @@ export function AutomationsPanel({ refreshKey }: { refreshKey: number }) {
 export function SettingsPanel({ refreshKey, onChanged, globalPrivacy, onPrivacy }: { refreshKey: number; onChanged: () => void; globalPrivacy: boolean; onPrivacy: (v: boolean) => void }) {
   const [settings, setSettings] = useState<Record<string, unknown>>({});
   const [logs, setLogs] = useState<Array<{ id: string; level: string; category: string; message: string; createdAt: string }>>([]);
+  const [searchConnectors, setSearchConnectors] = useState<Array<{ id: string; type: string; name: string; enabled: boolean; status: string }>>([]);
+  const [section, setSection] = useState<"general" | "voice" | "intelligence" | "web">("general");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     try {
       const data = await api<{ settings: Record<string, unknown> }>("/api/settings");
       setSettings(data.settings);
-      const l = await api<{ logs: typeof logs }>("/api/logs");
+      const [l, c] = await Promise.all([
+        api<{ logs: typeof logs }>("/api/logs"),
+        api<{ connectors: typeof searchConnectors }>("/api/connectors"),
+      ]);
       setLogs(l.logs);
+      setSearchConnectors(c.connectors.filter((connector) => connector.type.startsWith("search_")));
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
-  };
-  useEffect(() => { load(); }, [refreshKey]);
+  }, []);
+  useEffect(() => { const timer = window.setTimeout(() => { void load(); }, 0); return () => window.clearTimeout(timer); }, [load, refreshKey]);
 
   const save = async (patch: Record<string, unknown>) => {
     try {
@@ -445,125 +469,184 @@ export function SettingsPanel({ refreshKey, onChanged, globalPrivacy, onPrivacy 
       setSettings(data.settings);
       if (patch.privacyMode !== undefined) onPrivacy(Boolean(patch.privacyMode));
       setNotice("Settings saved.");
-      setTimeout(() => setNotice(null), 2000);
+      setTimeout(() => setNotice(null), 2200);
       onChanged();
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
   };
 
   const num = (k: string) => (settings[k] as number | null) ?? "";
+  const selectClass = "mt-1 w-full rounded-lg border border-white/15 bg-black/40 px-3 py-2 text-sm";
+  const sections = [
+    { id: "general" as const, label: "General" },
+    { id: "voice" as const, label: "Voice" },
+    { id: "intelligence" as const, label: "Intelligence" },
+    { id: "web" as const, label: "Web & Research" },
+  ];
 
   return (
     <div className="mx-auto max-w-4xl space-y-4 p-4 md:p-6">
       <div>
         <h2 className="text-xl font-bold">Settings</h2>
-        <p className="text-sm text-slate-400">Global defaults. Conversations and projects can override routing and privacy.</p>
+        <p className="text-sm text-slate-400">Configure Ragnarok&apos;s voice, reasoning effort, live web access, privacy, and existing application defaults.</p>
       </div>
-      {error && <div className="rounded-xl border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-200">{error}</div>}
-      {notice && <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-3 text-sm text-emerald-200">{notice}</div>}
+      <div className="flex gap-1 overflow-x-auto rounded-xl border border-white/10 bg-white/[0.03] p-1" role="tablist" aria-label="Settings categories">
+        {sections.map((tab) => (
+          <button key={tab.id} role="tab" aria-selected={section === tab.id} onClick={() => setSection(tab.id)} className={`shrink-0 rounded-lg px-3 py-2 text-sm font-semibold transition ${section === tab.id ? "bg-white/10 text-white" : "text-slate-400 hover:bg-white/5 hover:text-slate-200"}`}>
+            {tab.label}
+          </button>
+        ))}
+      </div>
+      {error && <div role="alert" className="rounded-xl border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-200">{error}</div>}
+      {notice && <div role="status" className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-3 text-sm text-emerald-200">{notice}</div>}
 
-      <div className="grid gap-3 md:grid-cols-2">
-        <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-          <div className="flex items-center gap-2 font-semibold"><Zap size={15} /> Routing</div>
-          <label className="mt-2 block">
-            <span className="text-xs text-slate-400">Default routing mode</span>
-            <select value={String(settings.routingMode || "auto")} onChange={(e) => save({ routingMode: e.target.value })} className="mt-1 w-full rounded-lg border border-white/15 bg-black/30 px-3 py-2 text-sm">
-              <option value="auto">Automatic</option>
-              <option value="ask">Ask me</option>
-              <option value="manual">Manual</option>
-            </select>
-          </label>
-          <label className="mt-3 flex items-center justify-between text-sm">
-            <span>Privacy Mode (local only, global)</span>
-            <button onClick={() => save({ privacyMode: !globalPrivacy })} className={`rounded-lg border px-3 py-1.5 text-xs font-bold ${globalPrivacy ? "border-emerald-500/50 text-emerald-200" : "border-white/15"}`}>
-              {globalPrivacy ? "ON" : "OFF"}
-            </button>
-          </label>
-        </div>
-        <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-          <div className="flex items-center gap-2 font-semibold"><DollarSign size={15} /> Budget controls</div>
-          <div className="mt-2 grid grid-cols-2 gap-2">
-            <label className="block">
-              <span className="text-xs text-slate-400">Daily warn ($)</span>
-              <input type="number" step="0.5" value={num("budgetDailyUsd")} onChange={(e) => save({ budgetDailyUsd: e.target.value ? Number(e.target.value) : null })} className="mt-1 w-full rounded-lg border border-white/15 bg-black/30 px-3 py-2 text-sm" placeholder="—" />
+      {section === "voice" && <VoiceSettingsPanel />}
+
+      {section === "intelligence" && (
+        <div className="space-y-3">
+          <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 sm:p-5">
+            <div className="flex items-center gap-2 font-semibold"><Zap size={15} className="text-amber-200" /> Auto Route</div>
+            <label className="mt-3 block">
+              <span className="text-xs text-slate-400">Default routing mode</span>
+              <select value={String(settings.routingMode || "auto")} onChange={(e) => save({ routingMode: e.target.value })} className={selectClass}>
+                <option value="auto">Automatic · choose a suitable provider and model</option>
+                <option value="ask">Ask me · confirm the selected model first</option>
+                <option value="manual">Manual · use the model pinned in each conversation</option>
+              </select>
             </label>
-            <label className="block">
-              <span className="text-xs text-slate-400">Monthly warn ($)</span>
-              <input type="number" step="1" value={num("budgetMonthlyUsd")} onChange={(e) => save({ budgetMonthlyUsd: e.target.value ? Number(e.target.value) : null })} className="mt-1 w-full rounded-lg border border-white/15 bg-black/30 px-3 py-2 text-sm" placeholder="—" />
-            </label>
+            <p className="mt-2 text-xs leading-relaxed text-slate-500">Automatic routing considers task capability, privacy, reasoning depth, tool/research needs, and speed/cost signals. Local and smaller models are favored for simple fast requests; stronger models are favored for difficult work when available.</p>
           </div>
-          <p className="mt-1 text-[11px] text-slate-500">Chat is blocked with a clear message once a limit is reached (override available per request).</p>
-        </div>
-        <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-          <div className="flex items-center gap-2 font-semibold"><Bot size={15} /> Agent limits</div>
-          <div className="mt-2 grid grid-cols-2 gap-2">
-            <label className="block">
-              <span className="text-xs text-slate-400">Max steps</span>
-              <input type="number" value={Number(settings.agentMaxSteps || 25)} onChange={(e) => save({ agentMaxSteps: Number(e.target.value) || 25 })} className="mt-1 w-full rounded-lg border border-white/15 bg-black/30 px-3 py-2 text-sm" />
+          <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 sm:p-5">
+            <div className="flex items-center gap-2 font-semibold"><Brain size={15} className="text-violet-200" /> Reasoning effort</div>
+            <label className="mt-3 block">
+              <span className="text-xs text-slate-400">Default reasoning depth</span>
+              <select value={String(settings.reasoningDepth || "auto")} onChange={(e) => save({ reasoningDepth: e.target.value })} className={selectClass}>
+                <option value="auto">Auto · estimate task complexity</option>
+                <option value="fast">Fast · favor speed and lower cost</option>
+                <option value="balanced">Balanced · ordinary requests</option>
+                <option value="deep">Deep · difficult analysis, code, research, math, and planning</option>
+                <option value="maximum">Maximum · highest practical effort for this request</option>
+              </select>
             </label>
-            <label className="block">
-              <span className="text-xs text-slate-400">Max retries</span>
-              <input type="number" value={Number(settings.agentMaxRetries ?? 2)} onChange={(e) => save({ agentMaxRetries: Number(e.target.value) ?? 2 })} className="mt-1 w-full rounded-lg border border-white/15 bg-black/30 px-3 py-2 text-sm" />
-            </label>
-          </div>
-          <p className="mt-1 text-[11px] text-slate-500">Hard caps prevent runaway loops. Agent state persists — resume anytime.</p>
-        </div>
-        <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-          <div className="flex items-center gap-2 font-semibold"><SettingsIcon size={15} /> Context</div>
-          <div className="mt-2 grid grid-cols-2 gap-2">
-            <label className="block">
-              <span className="text-xs text-slate-400">Recent messages</span>
-              <input type="number" value={Number(settings.contextRecentMessages || 24)} onChange={(e) => save({ contextRecentMessages: Number(e.target.value) || 24 })} className="mt-1 w-full rounded-lg border border-white/15 bg-black/30 px-3 py-2 text-sm" />
-            </label>
-            <label className="block">
-              <span className="text-xs text-slate-400">Max chars</span>
-              <input type="number" value={Number(settings.contextMaxChars || 24000)} onChange={(e) => save({ contextMaxChars: Number(e.target.value) || 24000 })} className="mt-1 w-full rounded-lg border border-white/15 bg-black/30 px-3 py-2 text-sm" />
-            </label>
+            <p className="mt-2 text-xs leading-relaxed text-slate-500">The choice is saved between sessions and can be overridden in the chat header. Native effort controls are sent only to model families known to support them (including supported OpenAI reasoning and Gemini thinking models); other models receive an effort-aware prompt and Auto Route scoring instead.</p>
           </div>
         </div>
-      </div>
+      )}
 
-      <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-        <div className="flex items-center gap-2 font-semibold"><Download size={15} /> Backup & restore</div>
-        <p className="mt-1 text-xs text-slate-400">Export everything (conversations, memories, projects, task history, settings). API keys are never exported.</p>
-        <div className="mt-2 flex gap-2">
-          <a href="/api/export" className="rounded-lg bg-white/10 px-4 py-2 text-sm font-bold hover:bg-white/15">Download backup</a>
-          <label className="flex cursor-pointer items-center gap-1 rounded-lg border border-white/15 px-4 py-2 text-sm">
-            <Upload size={14} /> Restore
-            <input
-              type="file" accept=".json" className="hidden"
-              onChange={async (e) => {
-                const f = e.target.files?.[0];
-                if (!f) return;
-                try {
-                  const json = JSON.parse(await f.text());
-                  const res = await api<{ restored: Record<string, number> }>("/api/import", { method: "POST", json });
-                  setNotice(`Restored: ${JSON.stringify(res.restored)}`);
-                  onChanged();
-                } catch (err) { setError(err instanceof Error ? err.message : String(err)); }
-              }}
-            />
-          </label>
-        </div>
-      </div>
-
-      <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-        <div className="flex items-center gap-2 font-semibold"><ScrollText size={15} /> System logs <span className="text-xs font-normal text-slate-500">(secrets never logged)</span></div>
-        <div className="mt-2 max-h-72 space-y-1 overflow-auto font-mono text-xs">
-          {logs.slice(0, 120).map((l) => (
-            <div key={l.id} className="flex gap-2 border-b border-white/5 py-1">
-              <span className={l.level === "error" ? "text-red-300" : l.level === "warn" ? "text-amber-300" : "text-slate-400"}>[{l.level}]</span>
-              <span className="text-indigo-300">[{l.category}]</span>
-              <span className="flex-1 text-slate-300">{l.message}</span>
-              <span className="text-slate-600">{timeAgo(l.createdAt)}</span>
+      {section === "web" && (
+        <div className="space-y-3">
+          <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 sm:p-5">
+            <div className="flex items-center gap-2 font-semibold"><Search size={15} className="text-sky-200" /> Web Access</div>
+            <label className="mt-3 block">
+              <span className="text-xs text-slate-400">Chat web retrieval</span>
+              <select value={String(settings.webAccess || "auto")} onChange={(e) => save({ webAccess: e.target.value })} className={selectClass}>
+                <option value="auto">Auto · search when current information is needed</option>
+                <option value="on">On · retrieve live sources for each chat request</option>
+                <option value="off">Off · disable web search and browsing in chat</option>
+              </select>
+            </label>
+            <p className="mt-2 text-xs leading-relaxed text-slate-500">Auto uses task and freshness classification. On performs real search and, when privacy allows, retrieves readable pages. Off removes web tools from chat and instructs the model not to imply live retrieval. Manual searches in the Research workspace remain explicit user actions and always honor Privacy Mode.</p>
+            <div className="mt-4 rounded-xl border border-white/10 bg-black/20 p-3">
+              <div className="text-sm font-medium">Search providers</div>
+              {searchConnectors.filter((connector) => connector.enabled).length ? (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {searchConnectors.filter((connector) => connector.enabled).map((connector) => (
+                    <span key={connector.id} className="rounded-lg border border-sky-400/20 bg-sky-400/5 px-2.5 py-1.5 text-xs text-sky-100">{connector.name} · {connector.type.replace("search_", "")}</span>
+                  ))}
+                </div>
+              ) : <p className="mt-1 text-xs text-slate-500">Built-in live search: DuckDuckGo + Wikipedia. Add Tavily, Brave, Serper, or self-hosted SearXNG for additional providers.</p>}
+              <button onClick={() => window.dispatchEvent(new CustomEvent("ragnarok:goto-connectors"))} className="mt-3 rounded-lg border border-white/15 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-white/10">Manage search connectors</button>
             </div>
-          ))}
-          {!logs.length && <div className="text-slate-500">No logs yet.</div>}
+            <div className="mt-3 rounded-xl border border-emerald-500/15 bg-emerald-500/5 p-3 text-xs text-slate-300">When live sources are retrieved, Ragnarok shows clickable citations beneath its answer. If retrieval fails, it reports the limitation rather than claiming the model&apos;s pretrained knowledge is live.</div>
+          </div>
         </div>
-      </div>
+      )}
 
-      <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-xs text-slate-500">
-        Nexus v1 · Local-first · Your data stays in your database and workspace. Remote access: use a VPN or authenticated reverse proxy — never expose this port directly to the internet.
-      </div>
+      {section === "general" && (
+        <div className="space-y-3">
+          <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+            <div className="flex items-center gap-2 font-semibold"><SettingsIcon size={15} /> Appearance</div>
+            <p className="mt-1 text-sm text-slate-400">The workspace stays near-black. The sidebar can show a restrained Swedish-blue field with a muted gold Nordic cross.</p>
+            <label className="mt-3 flex flex-wrap items-center justify-between gap-3 text-sm">
+              <span>Swedish flag sidebar treatment</span>
+              <button onClick={() => save({ sidebarFlagEnabled: settings.sidebarFlagEnabled === false })} aria-pressed={settings.sidebarFlagEnabled !== false} className={`rounded-lg border px-3 py-1.5 text-xs font-bold ${settings.sidebarFlagEnabled !== false ? "border-sky-400/40 bg-sky-400/10 text-sky-100" : "border-white/15 text-slate-300"}`}>
+                {settings.sidebarFlagEnabled !== false ? "ON" : "OFF"}
+              </button>
+            </label>
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+            <div className="flex items-center gap-2 font-semibold"><ShieldCheck size={15} /> Privacy</div>
+            <label className="mt-3 flex flex-wrap items-center justify-between gap-3 text-sm">
+              <span>Privacy Mode · restrict model routing to local providers</span>
+              <button onClick={() => save({ privacyMode: !globalPrivacy })} aria-pressed={globalPrivacy} className={`rounded-lg border px-3 py-1.5 text-xs font-bold ${globalPrivacy ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-200" : "border-white/15 text-slate-300"}`}>
+                {globalPrivacy ? "ON" : "OFF"}
+              </button>
+            </label>
+            <p className="mt-2 text-xs text-slate-500">Global privacy applies even if an individual conversation has Privacy Mode off. Cloud model calls are blocked; web search requires a configured private SearXNG instance.</p>
+          </div>
+          <div className="grid gap-3 md:grid-cols-2">
+            <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+              <div className="flex items-center gap-2 font-semibold"><DollarSign size={15} /> Budget controls</div>
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                <label className="block"><span className="text-xs text-slate-400">Daily warn ($)</span><input type="number" step="0.5" value={num("budgetDailyUsd")} onChange={(e) => save({ budgetDailyUsd: e.target.value ? Number(e.target.value) : null })} className={selectClass} placeholder="—" /></label>
+                <label className="block"><span className="text-xs text-slate-400">Monthly warn ($)</span><input type="number" step="1" value={num("budgetMonthlyUsd")} onChange={(e) => save({ budgetMonthlyUsd: e.target.value ? Number(e.target.value) : null })} className={selectClass} placeholder="—" /></label>
+              </div>
+              <p className="mt-1 text-[11px] text-slate-500">Chat is blocked with a clear message once a limit is reached (override available per request).</p>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+              <div className="flex items-center gap-2 font-semibold"><Bot size={15} /> Agent limits</div>
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                <label className="block"><span className="text-xs text-slate-400">Max steps</span><input type="number" value={Number(settings.agentMaxSteps || 25)} onChange={(e) => save({ agentMaxSteps: Number(e.target.value) || 25 })} className={selectClass} /></label>
+                <label className="block"><span className="text-xs text-slate-400">Max retries</span><input type="number" value={Number(settings.agentMaxRetries ?? 2)} onChange={(e) => save({ agentMaxRetries: Number(e.target.value) ?? 2 })} className={selectClass} /></label>
+              </div>
+              <p className="mt-1 text-[11px] text-slate-500">Hard caps prevent runaway loops. Agent state persists — resume anytime.</p>
+            </div>
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+            <div className="flex items-center gap-2 font-semibold"><SettingsIcon size={15} /> Context</div>
+            <div className="mt-2 grid gap-2 sm:grid-cols-2">
+              <label className="block"><span className="text-xs text-slate-400">Recent messages</span><input type="number" value={Number(settings.contextRecentMessages || 24)} onChange={(e) => save({ contextRecentMessages: Number(e.target.value) || 24 })} className={selectClass} /></label>
+              <label className="block"><span className="text-xs text-slate-400">Max chars</span><input type="number" value={Number(settings.contextMaxChars || 24000)} onChange={(e) => save({ contextMaxChars: Number(e.target.value) || 24000 })} className={selectClass} /></label>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+            <div className="flex items-center gap-2 font-semibold"><Download size={15} /> Backup & restore</div>
+            <p className="mt-1 text-xs text-slate-400">Export everything (conversations, memories, projects, task history, settings). API keys are never exported.</p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <a href="/api/export" className="rounded-lg bg-white/10 px-4 py-2 text-sm font-bold hover:bg-white/15">Download backup</a>
+              <label className="flex cursor-pointer items-center gap-1 rounded-lg border border-white/15 px-4 py-2 text-sm">
+                <Upload size={14} /> Restore
+                <input type="file" accept=".json" className="hidden" onChange={async (e) => {
+                  const f = e.target.files?.[0];
+                  if (!f) return;
+                  try {
+                    const json = JSON.parse(await f.text());
+                    const res = await api<{ restored: Record<string, number> }>("/api/import", { method: "POST", json });
+                    setNotice(`Restored: ${JSON.stringify(res.restored)}`);
+                    onChanged();
+                  } catch (err) { setError(err instanceof Error ? err.message : String(err)); }
+                }} />
+              </label>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+            <div className="flex items-center gap-2 font-semibold"><ScrollText size={15} /> System logs <span className="text-xs font-normal text-slate-500">(secrets never logged)</span></div>
+            <div className="mt-2 max-h-72 space-y-1 overflow-auto font-mono text-xs">
+              {logs.slice(0, 120).map((l) => (
+                <div key={l.id} className="flex flex-wrap gap-2 border-b border-white/5 py-1">
+                  <span className={l.level === "error" ? "text-red-300" : l.level === "warn" ? "text-amber-300" : "text-slate-400"}>[{l.level}]</span>
+                  <span className="text-sky-300">[{l.category}]</span>
+                  <span className="min-w-0 flex-1 break-words text-slate-300">{l.message}</span>
+                  <span className="text-slate-600">{timeAgo(l.createdAt)}</span>
+                </div>
+              ))}
+              {!logs.length && <div className="text-slate-500">No logs yet.</div>}
+            </div>
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-xs text-slate-500">Ragnarok · Local-first · Your data stays in your database and workspace. Remote access: use a VPN or authenticated reverse proxy — never expose this port directly to the internet.</div>
+        </div>
+      )}
     </div>
   );
 }
