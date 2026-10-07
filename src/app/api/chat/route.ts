@@ -15,6 +15,27 @@ import type { ChatMessage } from "@/lib/providers/types";
 import { fetchWebpage, webSearch } from "@/lib/search/providers";
 import { log } from "@/lib/logger";
 
+
+function buildSearchQuery(text: string): string {
+  let query = text.trim();
+
+  // Remove common instructions aimed at Ragnarok rather than the search engine.
+  query = query
+    .replace(/\b(search|browse|look up|find)\s+(the\s+)?(live\s+)?web\s+(for\s+)?/gi, "")
+    .replace(/\b(use|perform)\s+(live\s+)?web\s+search[.!]?\s*/gi, "")
+    .replace(/\bdo not answer from\b[\s\S]*?(?=\n|$)/gi, "")
+    .replace(/\b(give|provide|include|show|list)\s+me\b[\s\S]*?(sources?|links?|citations?|urls?)[.!]?\s*/gi, "")
+    .replace(/\n\s*(requirements?|instructions?|format)\s*:?\s*[\s\S]*/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  // Search engines perform better with concise queries.
+  if (query.length > 300) {
+    query = query.slice(0, 300).replace(/\s+\S*$/, "");
+  }
+
+  return query || text.trim().slice(0, 300);
+}
 export const maxDuration = 300;
 
 function sseEncode(event: string, data: unknown): string {
@@ -166,12 +187,15 @@ export async function POST(req: NextRequest) {
 
       if (shouldSearch && content.trim()) {
         try {
-          const searchResult = await webSearch(content.trim().slice(0, 1200), {
+          const plannedSearchQuery = buildSearchQuery(content);
+          await log("info", "search", `Planned search query: "${plannedSearchQuery}"`);
+          const searchResult = await webSearch(plannedSearchQuery, {
             maxResults: 6,
             privacyMode,
             signal: req.signal,
           });
           if (!searchResult.results.length) throw new Error("Search providers returned no results.");
+          await log("info", "search", "Retrieved results: " + searchResult.results.map((r, i) => `${i + 1}. ${r.title} | ${r.url}`).join(" || "));
           const pages = privacyMode ? [] : await Promise.all(searchResult.results.slice(0, 3).map(async (r) => {
             try { return await fetchWebpage(r.url, { maxChars: 5000, signal: req.signal }); }
             catch { return null; }
@@ -405,3 +429,9 @@ function sseResponse(gen: () => AsyncGenerator<string>): Response {
     },
   });
 }
+
+
+
+
+
+

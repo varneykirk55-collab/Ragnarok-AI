@@ -98,9 +98,9 @@ export async function retrieveMemories(query: string, opts?: { projectId?: strin
 
 /** Parse "remember this / forget this" style commands from user text. */
 export function parseMemoryCommand(text: string): { action: "remember" | "forget"; payload: string } | null {
-  const t = text.trim();
+  const t = typeof text === "string" ? text.trim() : "";
   const remember = /^(remember|memorize|save (to memory|this)|note this|keep in mind)[:\s]+([\s\S]+)/i.exec(t);
-  if (remember) return { action: "remember", payload: remember[2].trim() };
+  if (remember) return { action: "remember", payload: remember[3].trim() };
   // "remember that I prefer X"
   const remember2 = /^remember that ([\s\S]+)/i.exec(t);
   if (remember2) return { action: "remember", payload: remember2[1].trim() };
@@ -123,3 +123,5 @@ export async function forgetMatching(payload: string, projectId?: string): Promi
   }
   return count;
 }
+
+

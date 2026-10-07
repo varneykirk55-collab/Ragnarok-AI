@@ -20,6 +20,8 @@ COPY --from=builder /app/.next ./.next
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/src ./src
 COPY --from=builder /app/drizzle.config.json ./drizzle.config.json
+COPY --from=builder /app/tsconfig.json ./tsconfig.json
 RUN mkdir -p data/workspaces
 EXPOSE 3000
 CMD ["sh", "-c", "npx drizzle-kit push --config=drizzle.config.json || true; npm start"]
+
