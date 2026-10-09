@@ -5,78 +5,39 @@ import { decryptSecret } from "../crypto";
 import { log } from "../logger";
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
-
-export interface SearchResult {
-  title: string;
-  url: string;
-  snippet: string;
-  source: string;
-  publishedAt?: string;
-}
-
-export interface SearchResponse {
-  results: SearchResult[];
-  provider: string;
-  query: string;
-  latencyMs: number;
-}
+import { searchRequestSignal } from "./network";
+import { normalizeSearchResults, parseDuckDuckGoResults, stripHtml, type SearchResponse, type SearchResult } from "./results";
+import { normalizeSearchQuery } from "./query";
 
 // ---------- Free / no-key providers ----------
 
 async function searchDuckDuckGo(query: string, maxResults: number, signal?: AbortSignal): Promise<SearchResult[]> {
-  // Use DDG HTML endpoint (no key). Parse result links.
+  // Use DDG HTML endpoint (no key); parsing is tolerant of attribute order/quotes.
   const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
   const res = await fetch(url, {
     headers: {
       "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
       Accept: "text/html",
     },
-    signal: signal ?? AbortSignal.timeout(20000),
+    signal: searchRequestSignal(signal, 20000),
   });
   if (!res.ok) throw new Error(`DuckDuckGo returned HTTP ${res.status}`);
-  const html = await res.text();
-  const results: SearchResult[] = [];
-  // Parse result__a links
-  const linkRe = /<a[^>]*class="[^"]*result__a[^"]*"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
-  const snippetRe = /<a[^>]*class="[^"]*result__snippet[^"]*"[^>]*>([\s\S]*?)<\/a>/gi;
-  const snippets: string[] = [];
-  let sm: RegExpExecArray | null;
-  while ((sm = snippetRe.exec(html)) !== null && snippets.length < 30) {
-    snippets.push(stripTags(decodeEntities(sm[1])).slice(0, 500));
-  }
-  let m: RegExpExecArray | null;
-  let i = 0;
-  while ((m = linkRe.exec(html)) !== null && results.length < maxResults) {
-    let href = decodeEntities(m[1]);
-    // DDG wraps with //duckduckgo.com/l/?uddg=<encoded>
-    const uddg = /uddg=([^&"]+)/.exec(href);
-    if (uddg) {
-      try { href = decodeURIComponent(uddg[1]); } catch { /* keep */ }
-    }
-    if (href.startsWith("//")) href = "https:" + href;
-    if (!href.startsWith("http")) { i++; continue; }
-    if (href.includes("duckduckgo.com/")) { i++; continue; }
-    const title = stripTags(decodeEntities(m[2])).slice(0, 300) || href;
-    let domain = "";
-    try { domain = new URL(href).hostname; } catch { domain = "web"; }
-    results.push({ title, url: href, snippet: snippets[i] || "", source: domain });
-    i++;
-  }
-  return results;
+  const html = (await res.text()).slice(0, 5_000_000);
+  return parseDuckDuckGoResults(html, maxResults);
 }
 
 async function searchWikipedia(query: string, maxResults: number, signal?: AbortSignal): Promise<SearchResult[]> {
   const url = `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&format=json&srlimit=${maxResults}&origin=*`;
-  const res = await fetch(url, { signal: signal ?? AbortSignal.timeout(15000) });
+  const res = await fetch(url, { signal: searchRequestSignal(signal, 15000) });
   if (!res.ok) throw new Error(`Wikipedia returned HTTP ${res.status}`);
   const json = await res.json();
   const hits = (json.query?.search ?? []) as Array<{ title: string; snippet: string; timestamp?: string }>;
   return hits.map((h) => ({
     title: h.title,
     url: `https://en.wikipedia.org/wiki/${encodeURIComponent(h.title.replace(/ /g, "_"))}`,
-    snippet: stripTags(h.snippet ?? "").slice(0, 500),
+    snippet: stripHtml(h.snippet ?? "").slice(0, 500),
     source: "wikipedia.org",
-    publishedAt: h.timestamp,
+    updatedAt: h.timestamp,
   }));
 }
 
@@ -87,7 +48,7 @@ async function searchTavily(apiKey: string, query: string, maxResults: number, s
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ api_key: apiKey, query, max_results: maxResults, search_depth: "advanced", include_answer: false }),
-    signal: signal ?? AbortSignal.timeout(25000),
+    signal: searchRequestSignal(signal, 25000),
   });
   if (!res.ok) throw new Error(`Tavily returned HTTP ${res.status}`);
   const json = await res.json();
@@ -102,7 +63,7 @@ async function searchTavily(apiKey: string, query: string, maxResults: number, s
 async function searchBrave(apiKey: string, query: string, maxResults: number, signal?: AbortSignal): Promise<SearchResult[]> {
   const res = await fetch(`https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${maxResults}`, {
     headers: { Accept: "application/json", "X-Subscription-Token": apiKey },
-    signal: signal ?? AbortSignal.timeout(25000),
+    signal: searchRequestSignal(signal, 25000),
   });
   if (!res.ok) throw new Error(`Brave returned HTTP ${res.status}`);
   const json = await res.json();
@@ -119,7 +80,7 @@ async function searchSerper(apiKey: string, query: string, maxResults: number, s
     method: "POST",
     headers: { "Content-Type": "application/json", "X-API-KEY": apiKey },
     body: JSON.stringify({ q: query, num: maxResults }),
-    signal: signal ?? AbortSignal.timeout(25000),
+    signal: searchRequestSignal(signal, 25000),
   });
   if (!res.ok) throw new Error(`Serper returned HTTP ${res.status}`);
   const json = await res.json();
@@ -134,7 +95,7 @@ async function searchSerper(apiKey: string, query: string, maxResults: number, s
 async function searchSearXNG(baseUrl: string, query: string, maxResults: number, signal?: AbortSignal): Promise<SearchResult[]> {
   const base = baseUrl.replace(/\/+$/, "");
   const res = await fetch(`${base}/search?q=${encodeURIComponent(query)}&format=json`, {
-    signal: signal ?? AbortSignal.timeout(25000),
+    signal: searchRequestSignal(signal, 25000),
   });
   if (!res.ok) throw new Error(`SearXNG returned HTTP ${res.status}`);
   const json = await res.json();
@@ -142,7 +103,7 @@ async function searchSearXNG(baseUrl: string, query: string, maxResults: number,
   return items.slice(0, maxResults).map((r) => {
     let domain = "";
     try { domain = new URL(r.url).hostname; } catch { domain = "searxng"; }
-    return { title: r.title, url: r.url, snippet: (r.content ?? "").slice(0, 600), source: domain };
+    return { title: r.title, url: r.url, snippet: (r.content ?? "").slice(0, 600), source: domain, publishedAt: r.publishedDate };
   });
 }
 
@@ -158,21 +119,39 @@ export async function getSearchConnectors() {
 
 export async function webSearch(query: string, opts?: { maxResults?: number; privacyMode?: boolean; signal?: AbortSignal }): Promise<SearchResponse> {
   const start = Date.now();
+  const normalizedQuery = normalizeSearchQuery(query);
+  if (!normalizedQuery) throw new Error("A non-empty search query is required.");
   const maxResults = Math.min(20, Math.max(1, opts?.maxResults ?? 8));
   const errors: string[] = [];
+  const checkAborted = () => {
+    if (!opts?.signal?.aborted) return;
+    if (opts.signal.reason instanceof Error) throw opts.signal.reason;
+    const error = new Error("Web search request was cancelled.");
+    error.name = "AbortError";
+    throw error;
+  };
+  const response = (results: SearchResult[], provider: string): SearchResponse => ({
+    results,
+    provider,
+    query: normalizedQuery,
+    latencyMs: Date.now() - start,
+  });
 
-  // Privacy mode: only self-hosted SearXNG allowed (no cloud search APIs, no external DDG/Wikipedia? DDG is external).
-  // In privacy mode we allow SearXNG if configured; otherwise refuse cloud search.
+  // Privacy mode permits only a configured self-hosted SearXNG instance.
   if (opts?.privacyMode) {
+    checkAborted();
     const rows = await getSearchConnectors();
     const searx = rows.find((r) => r.type === "search_searxng" && r.enabled);
     if (searx) {
       const baseUrl = (searx.config as { baseUrl?: string })?.baseUrl || "";
       if (baseUrl) {
         try {
-          const results = await searchSearXNG(baseUrl, query, maxResults, opts?.signal);
-          return { results, provider: "searxng (local)", query, latencyMs: Date.now() - start };
+          const raw = await searchSearXNG(baseUrl, normalizedQuery, maxResults, opts?.signal);
+          const results = normalizeSearchResults(raw, maxResults);
+          if (!results.length) throw new Error("SearXNG returned no usable results.");
+          return response(results, "searxng (local)");
         } catch (e) {
+          checkAborted();
           throw new Error(`Privacy Mode: self-hosted search failed: ${e instanceof Error ? e.message : String(e)}`);
         }
       }
@@ -180,56 +159,56 @@ export async function webSearch(query: string, opts?: { maxResults?: number; pri
     throw new Error("Privacy Mode is on: cloud web search is disabled. Configure a self-hosted SearXNG connector to search privately, or turn Privacy Mode off.");
   }
 
-  // 1. Try configured keyed providers first (best quality)
-  try {
-    const rows = await getSearchConnectors();
-    const keyed = rows.filter((r) => r.enabled && ["search_tavily", "search_brave", "search_serper", "search_searxng"].includes(r.type));
-    for (const c of keyed) {
-      try {
-        const secrets = c.secretsEncrypted ? JSON.parse(decryptSecret(c.secretsEncrypted) || "{}") : {};
-        if (c.type === "search_tavily" && secrets.apiKey) {
-          const results = await searchTavily(secrets.apiKey, query, maxResults, opts?.signal);
-          if (results.length) return { results, provider: "tavily", query, latencyMs: Date.now() - start };
-        } else if (c.type === "search_brave" && secrets.apiKey) {
-          const results = await searchBrave(secrets.apiKey, query, maxResults, opts?.signal);
-          if (results.length) return { results, provider: "brave", query, latencyMs: Date.now() - start };
-        } else if (c.type === "search_serper" && secrets.apiKey) {
-          const results = await searchSerper(secrets.apiKey, query, maxResults, opts?.signal);
-          if (results.length) return { results, provider: "serper", query, latencyMs: Date.now() - start };
-        } else if (c.type === "search_searxng") {
-          const baseUrl = (c.config as { baseUrl?: string })?.baseUrl || "";
-          if (baseUrl) {
-            const results = await searchSearXNG(baseUrl, query, maxResults, opts?.signal);
-            if (results.length) return { results, provider: "searxng", query, latencyMs: Date.now() - start };
-          }
-        }
-      } catch (e) {
-        errors.push(`${c.type}: ${e instanceof Error ? e.message : String(e)}`);
+  // 1. Try configured providers first; skip empty/invalid responses and fall through.
+  const rows = await getSearchConnectors();
+  const keyed = rows.filter((r) => r.enabled && ["search_tavily", "search_brave", "search_serper", "search_searxng"].includes(r.type));
+  for (const connector of keyed) {
+    try {
+      const secrets = connector.secretsEncrypted ? JSON.parse(decryptSecret(connector.secretsEncrypted) || "{}") : {};
+      let raw: SearchResult[] = [];
+      if (connector.type === "search_tavily" && secrets.apiKey) {
+        raw = await searchTavily(secrets.apiKey, normalizedQuery, maxResults, opts?.signal);
+      } else if (connector.type === "search_brave" && secrets.apiKey) {
+        raw = await searchBrave(secrets.apiKey, normalizedQuery, maxResults, opts?.signal);
+      } else if (connector.type === "search_serper" && secrets.apiKey) {
+        raw = await searchSerper(secrets.apiKey, normalizedQuery, maxResults, opts?.signal);
+      } else if (connector.type === "search_searxng") {
+        const baseUrl = (connector.config as { baseUrl?: string })?.baseUrl || "";
+        if (baseUrl) raw = await searchSearXNG(baseUrl, normalizedQuery, maxResults, opts?.signal);
       }
+      const results = normalizeSearchResults(raw, maxResults);
+      if (results.length) return response(results, connector.type.replace("search_", ""));
+      if (raw.length) errors.push(`${connector.type}: returned no valid HTTP(S) results`);
+    } catch (e) {
+      checkAborted();
+      errors.push(`${connector.type}: ${e instanceof Error ? e.message : String(e)}`);
     }
-  } catch (e) {
-    errors.push(`connector lookup: ${e instanceof Error ? e.message : String(e)}`);
   }
 
-  // 2. Free providers (no key): DDG + Wikipedia in parallel
+  // 2. Free providers (no key): DuckDuckGo and Wikipedia run in parallel.
   const [ddg, wiki] = await Promise.allSettled([
-    searchDuckDuckGo(query, maxResults, opts?.signal),
-    searchWikipedia(query, 3, opts?.signal),
+    searchDuckDuckGo(normalizedQuery, maxResults, opts?.signal),
+    searchWikipedia(normalizedQuery, 3, opts?.signal),
   ]);
+  checkAborted();
   const merged: SearchResult[] = [];
-  if (ddg.status === "fulfilled") merged.push(...ddg.value);
+  if (ddg.status === "fulfilled") merged.push(...normalizeSearchResults(ddg.value, maxResults));
   else errors.push(`duckduckgo: ${ddg.reason instanceof Error ? ddg.reason.message : String(ddg.reason)}`);
   if (wiki.status === "fulfilled") {
-    for (const w of wiki.value) {
-      if (!merged.some((m) => m.url === w.url)) merged.push(w);
+    for (const result of normalizeSearchResults(wiki.value, maxResults)) {
+      if (!merged.some((existing) => existing.url === result.url)) merged.push(result);
     }
+  } else {
+    errors.push(`wikipedia: ${wiki.reason instanceof Error ? wiki.reason.message : String(wiki.reason)}`);
   }
   if (merged.length) {
-    await log("info", "search", `Search "${query}" → ${merged.length} results (free providers)`);
-    return { results: merged.slice(0, maxResults), provider: "duckduckgo+wikipedia (free)", query, latencyMs: Date.now() - start };
+    const results = merged.slice(0, maxResults);
+    await log("info", "search", `Search "${normalizedQuery}" → ${results.length} results (free providers)`);
+    return response(results, "duckduckgo+wikipedia (free)");
   }
-  await log("error", "search", `Search failed: ${query}`, { errors });
-  throw new Error(`Web search failed. ${errors.slice(0, 2).join(" ")} Configure Tavily/Brave/Serper in Connectors for higher reliability.`);
+  await log("error", "search", `Search failed: ${normalizedQuery}`, { errors });
+  const details = errors.slice(0, 3).join(" ");
+  throw new Error(`Web search failed.${details ? ` ${details}` : " Both free providers returned no usable results."} Configure Tavily/Brave/Serper in Connectors for higher reliability.`);
 }
 
 function isPrivateAddress(address: string): boolean {
@@ -295,7 +274,7 @@ export async function fetchWebpage(url: string, opts?: { maxChars?: number; sign
         "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
         Accept: "text/html,application/xhtml+xml,text/plain,application/json",
       },
-      signal: opts?.signal ?? AbortSignal.timeout(25000),
+      signal: searchRequestSignal(opts?.signal, 25000),
       redirect: "manual",
     });
     if (![301, 302, 303, 307, 308].includes(res.status)) break;
@@ -324,21 +303,6 @@ export async function fetchWebpage(url: string, opts?: { maxChars?: number; sign
     .replace(/<header[\s\S]*?<\/header>/gi, " ")
     .replace(/<footer[\s\S]*?<\/footer>/gi, " ")
     .replace(/<!--[\s\S]*?-->/g, " ");
-  const text = stripTags(decodeEntities(body)).replace(/\s+/g, " ").trim().slice(0, maxChars);
-  return { title: stripTags(decodeEntities(title)).trim().slice(0, 300), text, url: current.toString() };
-}
-
-function stripTags(s: string): string {
-  return s.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
-}
-
-function decodeEntities(s: string): string {
-  return s
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#x27;/g, "'")
-    .replace(/&#x2F;/g, "/")
-    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)));
+  const text = stripHtml(body).replace(/\s+/g, " ").trim().slice(0, maxChars);
+  return { title: stripHtml(title).trim().slice(0, 300), text, url: current.toString() };
 }

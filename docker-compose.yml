@@ -24,6 +24,8 @@ services:
       DATABASE_URL: postgresql://nexus:nexus@db:5432/nexus
       SECRET_ENCRYPTION_KEY: ${SECRET_ENCRYPTION_KEY:-change-me-in-production}
       PORT: 3000
+      TZ: ${TZ:-UTC}
+      RAGNAROK_TIME_ZONE: ${RAGNAROK_TIME_ZONE:-UTC}
     ports:
       - "127.0.0.1:3000:3000"
     volumes:

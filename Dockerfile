@@ -12,7 +12,7 @@ RUN npm run build
 
 FROM node:22-alpine AS runner
 WORKDIR /app
-ENV NODE_ENV=production
+ENV NODE_ENV=production TZ=UTC RAGNAROK_TIME_ZONE=UTC
 RUN apk add --no-cache python3 postgresql-client
 COPY --from=builder /app/package.json ./package.json
 COPY --from=builder /app/node_modules ./node_modules

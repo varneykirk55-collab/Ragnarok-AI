@@ -3,6 +3,8 @@ import { listResolvedProviders, listStoredModels } from "../providers/manager";
 import { getSettings } from "../server-settings";
 import { log } from "../logger";
 import type { ReasoningDepth } from "../voice/config";
+import { isRuntimeDateQuestion } from "../context/runtime";
+import { isExplicitWebSearchRequest } from "../search/query";
 
 // ---------- Task classification (rule + heuristic layer, extensible) ----------
 
@@ -41,6 +43,10 @@ const FRESHNESS_PATTERNS = [
 ];
 
 export function classifyTask(text: string, opts?: { hasAttachments?: boolean; hasImages?: boolean; agentMode?: boolean }): Classification {
+  if (isRuntimeDateQuestion(text) && !opts?.hasAttachments && !opts?.hasImages) {
+    return { capability: "conversation", confidence: 0.99, needsWeb: false, needsTools: false, reasons: ["answered directly from the runtime clock"] };
+  }
+
   const reasons: string[] = [];
   let best: CapabilityCategory = "conversation";
   let bestScore = 0.35;
@@ -85,7 +91,7 @@ export function classifyTask(text: string, opts?: { hasAttachments?: boolean; ha
       reasons.push("agent mode requested");
     }
   }
-  if (/\b(search the web|look up online|find online|browse the web)\b/i.test(text)) {
+  if (isExplicitWebSearchRequest(text)) {
     needsWeb = true;
     needsTools = true;
     reasons.push("explicit live-web request");
