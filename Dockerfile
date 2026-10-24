@@ -7,7 +7,6 @@ FROM node:22-alpine AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-RUN npx drizzle-kit push --config=drizzle.config.json || true
 RUN npm run build
 
 FROM node:22-alpine AS runner
@@ -19,9 +18,9 @@ COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/.next ./.next
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/src ./src
-COPY --from=builder /app/drizzle.config.json ./drizzle.config.json
+COPY --from=builder /app/drizzle.config.ts ./drizzle.config.ts
 COPY --from=builder /app/tsconfig.json ./tsconfig.json
 RUN mkdir -p data/workspaces
 EXPOSE 3000
-CMD ["sh", "-c", "npx drizzle-kit push --config=drizzle.config.json || true; npm start"]
+CMD ["sh", "-c", "npx drizzle-kit push --config=drizzle.config.ts || true; npm start"]
 

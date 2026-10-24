@@ -83,7 +83,7 @@ Services: `app` (Next.js) + `db` (PostgreSQL 16). Data persists in Docker volume
 npm install
 cp .env.example .env
 # set DATABASE_URL + SECRET_ENCRYPTION_KEY in .env
-npx drizzle-kit push
+npx drizzle-kit push   # uses DATABASE_URL from .env (drizzle.config.ts)
 npm run build
 npm start
 # open http://localhost:3000
@@ -122,10 +122,10 @@ Automations store schedules in the DB. To run due automations in the background:
 
 ```bash
 # every minute via cron:
-* * * * * cd /path/to/Ragnarok-AI && npx tsx scripts/scheduler.ts >> data/scheduler.log 2>&1
+* * * * * cd /path/to/Ragnarok-AI && npm run scheduler -- --once >> data/scheduler.log 2>&1
 ```
 
-Or run once manually: `npx tsx scripts/scheduler.ts --once`.
+Or run once manually: `npm run scheduler -- --once`. The scheduler reads `DATABASE_URL` from `.env`.
 
 ## Updating
 
@@ -165,3 +165,4 @@ Back up first via **Settings → Backup & restore → Download backup**.
 - `ARCHITECTURE.md` — components, model/tool layers, agent loop, memory, permissions, security boundaries
 - `ADDING_PROVIDER.md` — integrate a new AI provider
 - `ADDING_TOOL.md` — add a new tool
+- `REPAIRS.md` — startup/build repair log and known limitations

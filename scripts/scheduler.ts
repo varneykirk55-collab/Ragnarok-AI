@@ -4,10 +4,11 @@
  * Polls the `automations` table for due interval-based automations and
  * launches agent tasks for them. Run every minute via cron:
  *
- *   * * * * * cd /path/to/Ragnarok-AI && npx tsx scripts/scheduler.ts >> data/scheduler.log 2>&1
+ *   * * * * * cd /path/to/Ragnarok-AI && npm run scheduler -- --once >> data/scheduler.log 2>&1
  *
- * Or once: npx tsx scripts/scheduler.ts --once
+ * Or once: npm run scheduler -- --once
  */
+import "dotenv/config";
 import { Pool } from "pg";
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
